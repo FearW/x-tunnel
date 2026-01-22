@@ -5,7 +5,6 @@ set -euo pipefail
 # - Quick Tunnel (trycloudflare) + Named Tunnel (bind domain)
 # - Auto self-check / debug
 # - 新增：菜单选项 4.域名绑定查看（查看当前保存的临时域名、绑定域名、端口等信息，并自检）
-# - 新增：启动时自动保存配置到 ~/.suoha_tunnel_config（便于查看）
 # - 新增：停止服务/清空缓存时自动删除配置文件
 # =========================
 
