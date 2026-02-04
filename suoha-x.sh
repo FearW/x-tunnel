@@ -43,29 +43,44 @@ optimize_system() {
     if systemd-detect-virt | grep -qE "lxc|docker|wsl"; then
         log warn "容器环境：跳过内核参数修改，仅优化连接数限制。"
     else
-        modprobe tcp_bbr 2>/dev/null
+        local cc_algo="bbr"
+        if grep -q "bbr2" /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+            cc_algo="bbr2"
+        else
+            modprobe tcp_bbr 2>/dev/null
+        fi
+
+        local qdisc_algo="fq_codel"
+        if tc qdisc add dev lo root fq >/dev/null 2>&1; then
+            tc qdisc del dev lo root >/dev/null 2>&1 || true
+            qdisc_algo="fq"
+        fi
+
         cat > /etc/sysctl.d/99-suoha-speed.conf <<EOF
 # --- 拥塞控制 ---
-net.core.default_qdisc = fq_codel
-net.ipv4.tcp_congestion_control = bbr
+net.core.default_qdisc = ${qdisc_algo}
+net.ipv4.tcp_congestion_control = ${cc_algo}
 
 # --- 降低延迟关键参数 ---
 net.ipv4.tcp_notsent_lowat = 16384
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_no_metrics_save = 1
 
 # --- 连接性能 ---
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_fin_timeout = 15
 net.core.somaxconn = 8192
+net.core.netdev_max_backlog = 16384
 net.core.rmem_max = 33554432
 net.core.wmem_max = 33554432
 net.ipv4.tcp_rmem = 4096 87380 33554432
 net.ipv4.tcp_wmem = 4096 16384 33554432
 EOF
         sysctl -p /etc/sysctl.d/99-suoha-speed.conf >/dev/null 2>&1 || true
-        log success "内核优化完成"
+        log success "内核优化完成 (${qdisc_algo} + ${cc_algo})"
     fi
 
     ulimit -n 1000000
