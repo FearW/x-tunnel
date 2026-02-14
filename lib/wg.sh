@@ -77,6 +77,7 @@ start_wg_landing(){
 
   local script_dir wireproxy_path wireproxy_conf
   script_dir="${SCRIPT_DIR:-$(pwd)}"
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   wireproxy_path="${script_dir}/wireproxy-linux"
   wireproxy_conf="${script_dir}/wireproxy.conf"
 
@@ -147,6 +148,7 @@ EOH
 
   stop_screen wg
   screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
+  screen -dmUS wg bash -lc "./wireproxy-linux -c wireproxy.conf >> \"${wg_log_file}\" 2>&1"
   sleep 1
   if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
