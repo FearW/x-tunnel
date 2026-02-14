@@ -31,12 +31,17 @@ start_cfbind_service(){
 }
 
 start_wg_service_from_local_conf(){
-  if [[ ! -f "wireproxy.conf" || ! -x "./wireproxy-linux" ]]; then
+  local script_dir wireproxy_path wireproxy_conf
+  script_dir="${SCRIPT_DIR:-$(pwd)}"
+  wireproxy_path="${script_dir}/wireproxy-linux"
+  wireproxy_conf="${script_dir}/wireproxy.conf"
+
+  if [[ ! -f "${wireproxy_conf}" || ! -x "${wireproxy_path}" ]]; then
     say "[WARN] wireproxy 配置或二进制缺失，无法自动恢复 WG"
     return 1
   fi
   stop_screen wg
-  screen -dmUS wg ./wireproxy-linux -c wireproxy.conf
+  screen -dmUS wg "${wireproxy_path}" -c "${wireproxy_conf}"
   sleep 1
   if [[ -n "${wg_socks_port:-}" ]] && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
     return 0

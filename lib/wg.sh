@@ -76,11 +76,19 @@ start_wg_landing(){
   esac
 
   local script_dir wireproxy_path wireproxy_conf
+  script_dir="${SCRIPT_DIR:-$(pwd)}"
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   wireproxy_path="${script_dir}/wireproxy-linux"
   wireproxy_conf="${script_dir}/wireproxy.conf"
 
   download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "${wireproxy_path}"
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    curl -fsSL "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" -o "${wireproxy_path}"
+  fi
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
+    return 1
+  fi
   chmod +x "${wireproxy_path}"
 
   existing_profiles="$(list_wg_profiles || true)"
