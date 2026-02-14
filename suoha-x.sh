@@ -65,16 +65,29 @@ read -r -p "请选择模式(默认1):" mode
 mode="${mode:-1}"
 
 if [[ "$mode" == "1" ]]; then
-  read -r -p "请选择cloudflared连接模式IPV4或者IPV6(输入4或6,默认4):" ips
-  ips="${ips:-4}"
+  prev_ips="${ips:-4}"
+  prev_cf_profile="${cf_profile:-2}"
+  prev_token="${token:-}"
+
+  if load_config; then
+    say "检测到历史配置：可直接回车沿用上次参数（包括落地模式）"
+    prev_ips="${ips:-4}"
+    prev_cf_profile="${cf_profile:-2}"
+    prev_token="${token:-}"
+  fi
+
+  say "安装向导说明：先选传输档位，再选落地渠道（直连/HTTP/SOCKS5/WG），最后再配置端口和域名。"
+
+  read -r -p "请选择cloudflared连接模式IPV4或者IPV6(输入4或6,默认${prev_ips}):" ips
+  ips="${ips:-$prev_ips}"
   if [[ "$ips" != "4" && "$ips" != "6" ]]; then
     say "请输入正确的cloudflared连接模式"
     exit 1
   fi
 
   say "传输优化档位：1.稳定优先(HTTP2) 2.速度优先(QUIC+2并发) 3.高吞吐优先(QUIC+4并发)"
-  read -r -p "请选择传输优化档位(默认2):" cf_profile
-  cf_profile="${cf_profile:-2}"
+  read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
+  cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
     1) cf_protocol="http2"; cf_ha_connections="1" ;;
     2) cf_protocol="quic"; cf_ha_connections="2" ;;
@@ -87,8 +100,8 @@ if [[ "$mode" == "1" ]]; then
 
   configure_landing
 
-  read -r -p "请设置x-tunnel的token(可留空):" token
-  token="${token:-}"
+  read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
+  token="${token:-$prev_token}"
 
   read -r -p "是否固定ws端口(0.不固定[默认],1.固定):" fixp
   fixp="${fixp:-0}"
