@@ -62,6 +62,7 @@ need_cmd awk "$idx"
 need_cmd ss "$idx" || true
 need_cmd openssl "$idx" || true
 need_cmd nc "$idx" || true
+need_cmd tar "$idx" || true
 
 print_install_plan(){
   say "------------------------------"
