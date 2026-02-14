@@ -19,20 +19,37 @@ linux_os=("Debian" "Ubuntu" "CentOS" "Fedora" "Alpine")
 linux_update=("apt update" "apt update" "yum -y update" "yum -y update" "apk update")
 linux_install=("apt -y install" "apt -y install" "yum -y install" "yum -y install" "apk add -f")
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/lib"
+REMOTE_LIB_BASE="https://raw.githubusercontent.com/FearW/x-tunnel/refs/heads/main/lib"
+
+if [[ ! -d "${LIB_DIR}" ]]; then
+  mkdir -p "${LIB_DIR}"
+fi
+
+for lib_file in common.sh net.sh config.sh wg.sh services.sh guard.sh cloudflare.sh; do
+  if [[ ! -f "${LIB_DIR}/${lib_file}" ]]; then
+    curl -fsSL "${REMOTE_LIB_BASE}/${lib_file}" -o "${LIB_DIR}/${lib_file}" || {
+      echo "[ERROR] 缺少 ${lib_file} 且自动下载失败，请完整下载仓库后再运行。"
+      exit 1
+    }
+  fi
+done
+
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/common.sh"
+source "${LIB_DIR}/common.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/net.sh"
+source "${LIB_DIR}/net.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/config.sh"
+source "${LIB_DIR}/config.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/wg.sh"
+source "${LIB_DIR}/wg.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/services.sh"
+source "${LIB_DIR}/services.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/guard.sh"
+source "${LIB_DIR}/guard.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/cloudflare.sh"
+source "${LIB_DIR}/cloudflare.sh"
 
 idx="$(os_index)"
 need_cmd screen "$idx"
@@ -81,7 +98,7 @@ say "梭哈模式在重启或者脚本再次运行后失效,如果需要使用�
 printf "\n梭哈是一种智慧!!!梭哈!梭哈!梭哈!梭哈!梭哈!梭哈!梭哈...\n\n"
 say "1.梭哈模式"
 say "2.停止服务"
-say "3.清空缓存"
+say "3.卸载(彻底清理)"
 say "4.域名绑定查看"
 say "5.热切换落地(直连/HTTP/SOCKS5/WG)"
 say "6.健康守护开关"
@@ -112,8 +129,6 @@ if [[ "$mode" == "1" ]]; then
   fi
 
   say "传输优化档位：1.稳定优先(HTTP2) 2.速度优先(QUIC+2并发) 3.高吞吐优先(QUIC+4并发)"
-  read -r -p "请选择传输优化档位(默认2):" cf_profile
-  cf_profile="${cf_profile:-2}"
   read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
   cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
@@ -128,8 +143,6 @@ if [[ "$mode" == "1" ]]; then
 
   configure_landing
 
-  read -r -p "请设置x-tunnel的token(可留空):" token
-  token="${token:-}"
   read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
   token="${token:-$prev_token}"
 
@@ -218,10 +231,14 @@ elif [[ "$mode" == "3" ]]; then
   stop_screen cfbind
   stop_screen wg
   stop_guard
-  rm -f cloudflared-linux x-tunnel-linux wireproxy-linux wireproxy.conf
+  rm -f "${SCRIPT_DIR}/cloudflared-linux" "${SCRIPT_DIR}/x-tunnel-linux" "${SCRIPT_DIR}/wireproxy-linux" "${SCRIPT_DIR}/wireproxy.conf"
+  rm -f "${HOME}/.suoha_wireproxy.log"
+  rm -rf "${WG_PROFILE_DIR}"
+  rm -rf "${LIB_DIR}"
   remove_config
+  rm -f "${GUARD_LOG_FILE}"
   clear
-  say "已清空缓存（配置记录已清除）"
+  say "已卸载并彻底清理：服务、二进制、lib库、WG配置、日志与配置记录"
 
 elif [[ "$mode" == "4" ]]; then
   view_domains
