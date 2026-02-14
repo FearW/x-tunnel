@@ -63,6 +63,7 @@ collect_wg_inputs(){
 
 start_wg_landing(){
   local arch wireproxy_bin use_saved wg_profile_name existing_profiles
+  local wg_log_file
   arch="$(uname -m)"
   case "$arch" in
     x86_64|x64|amd64) wireproxy_bin="wireproxy-linux-amd64" ;;
@@ -97,6 +98,16 @@ start_wg_landing(){
     collect_wg_inputs
   fi
 
+  if [[ -z "${wg_private_key:-}" || -z "${wg_address:-}" || -z "${wg_peer_public_key:-}" ]]; then
+    say "[FAIL] WG参数不完整：PrivateKey/Address/Peer PublicKey 不能为空"
+    return 1
+  fi
+
+  if ! valid_hostport "${wg_endpoint:-}"; then
+    say "[FAIL] WG Endpoint 格式错误，请使用 host:port"
+    return 1
+  fi
+
   wg_socks_port="$(get_free_port)"
   cat > wireproxy.conf <<EOH
 [Interface]
@@ -119,8 +130,11 @@ EOH
 BindAddress = 127.0.0.1:${wg_socks_port}
 EOH
 
+  wg_log_file="${HOME}/.suoha_wireproxy.log"
+  : > "${wg_log_file}"
+
   stop_screen wg
-  screen -dmUS wg ./wireproxy-linux -c wireproxy.conf
+  screen -dmUS wg bash -lc "./wireproxy-linux -c wireproxy.conf >> \"${wg_log_file}\" 2>&1"
   sleep 1
   if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
@@ -129,6 +143,12 @@ EOH
   fi
 
   say "[FAIL] WG落地启动失败，请检查参数"
+  if [[ -s "${wg_log_file:-}" ]]; then
+    say "[INFO] wireproxy 最近日志："
+    tail -n 20 "${wg_log_file}"
+  else
+    say "[INFO] 未捕获到 wireproxy 日志，可检查 screen 会话: screen -r wg"
+  fi
   return 1
 }
 
