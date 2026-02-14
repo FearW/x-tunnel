@@ -8,12 +8,14 @@ GUARD_LOG_FILE="${HOME}/.suoha_guard.log"
 cf_protocol="quic"
 cf_ha_connections="4"
 cf_profile="2"
+cf_profile_prompted="0"
 net_tuned="0"
 landing_mode="0"
 forward_url=""
 wg_socks_port=""
 guard_enabled="0"
 guard_interval="15"
+token_prompted="0"
 
 linux_os=("Debian" "Ubuntu" "CentOS" "Fedora" "Alpine")
 linux_update=("apt update" "apt update" "yum -y update" "yum -y update" "apk update")
@@ -129,6 +131,10 @@ if [[ "$mode" == "1" ]]; then
   fi
 
   say "传输优化档位：1.稳定优先(HTTP2) 2.速度优先(QUIC+2并发) 3.高吞吐优先(QUIC+4并发)"
+  if [[ "${cf_profile_prompted}" != "1" ]]; then
+    read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
+    cf_profile_prompted="1"
+  fi
   read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
   cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
@@ -143,6 +149,10 @@ if [[ "$mode" == "1" ]]; then
 
   configure_landing
 
+  if [[ "${token_prompted}" != "1" ]]; then
+    read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
+    token_prompted="1"
+  fi
   read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
   token="${token:-$prev_token}"
 
