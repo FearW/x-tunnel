@@ -19,20 +19,37 @@ linux_os=("Debian" "Ubuntu" "CentOS" "Fedora" "Alpine")
 linux_update=("apt update" "apt update" "yum -y update" "yum -y update" "apk update")
 linux_install=("apt -y install" "apt -y install" "yum -y install" "yum -y install" "apk add -f")
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/lib"
+REMOTE_LIB_BASE="https://raw.githubusercontent.com/FearW/x-tunnel/refs/heads/main/lib"
+
+if [[ ! -d "${LIB_DIR}" ]]; then
+  mkdir -p "${LIB_DIR}"
+fi
+
+for lib_file in common.sh net.sh config.sh wg.sh services.sh guard.sh cloudflare.sh; do
+  if [[ ! -f "${LIB_DIR}/${lib_file}" ]]; then
+    curl -fsSL "${REMOTE_LIB_BASE}/${lib_file}" -o "${LIB_DIR}/${lib_file}" || {
+      echo "[ERROR] 缺少 ${lib_file} 且自动下载失败，请完整下载仓库后再运行。"
+      exit 1
+    }
+  fi
+done
+
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/common.sh"
+source "${LIB_DIR}/common.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/net.sh"
+source "${LIB_DIR}/net.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/config.sh"
+source "${LIB_DIR}/config.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/wg.sh"
+source "${LIB_DIR}/wg.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/services.sh"
+source "${LIB_DIR}/services.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/guard.sh"
+source "${LIB_DIR}/guard.sh"
 # shellcheck source=/dev/null
-source "$(dirname "$0")/lib/cloudflare.sh"
+source "${LIB_DIR}/cloudflare.sh"
 
 idx="$(os_index)"
 need_cmd screen "$idx"
