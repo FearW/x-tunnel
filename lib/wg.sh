@@ -65,7 +65,7 @@ start_wg_landing(){
   local arch download_bin_name
   arch="$(uname -m)"
   
-  # 适配 Release 中的文件名 (下划线命名)
+  # 适配 Pufferffish v1.0.6 Release 中的文件名 (下划线命名)
   case "$arch" in
     x86_64|x64|amd64) download_bin_name="wireproxy_linux_amd64" ;;
     i386|i686) download_bin_name="wireproxy_linux_386" ;;
@@ -81,17 +81,33 @@ start_wg_landing(){
   wireproxy_path="${script_dir}/wireproxy-linux"
   wireproxy_conf="${script_dir}/wireproxy.conf"
   
-  # 使用 v1.0.6 版本，因为该版本提供直连的二进制文件，避免 tar 解压问题
-  local download_url="https://github.com/pufferffish/wireproxy/releases/download/v1.0.6/${download_bin_name}"
+  # 使用 v1.0.6 版本下载 tar.gz 压缩包
+  local download_url="https://github.com/pufferffish/wireproxy/releases/download/v1.0.6/${download_bin_name}.tar.gz"
 
   if [[ ! -s "${wireproxy_path}" ]]; then
-    say "正在下载 Wireproxy..."
-    download_bin "${download_url}" "${wireproxy_path}"
+    say "正在下载 Wireproxy (v1.0.6)..."
+    # 下载 .tar.gz
+    if curl -fsSL "${download_url}" -o "wireproxy.tar.gz"; then
+      say "下载成功，正在解压..."
+      # 解压提取 wireproxy 二进制文件
+      # 注意：tar包内文件名通常为 wireproxy，我们尝试解压并重命名
+      tar -xzf "wireproxy.tar.gz" wireproxy >/dev/null 2>&1 || tar -xzf "wireproxy.tar.gz" >/dev/null 2>&1
+      rm -f "wireproxy.tar.gz"
+      
+      if [[ -f "wireproxy" ]]; then
+        mv "wireproxy" "${wireproxy_path}"
+      elif [[ -f "${download_bin_name}" ]]; then
+        # 备选：如果解压出来是带架构名的文件
+        mv "${download_bin_name}" "${wireproxy_path}"
+      fi
+    else
+      say "[FAIL] 下载失败，请检查网络连接。"
+    fi
   fi
   
   if [[ ! -s "${wireproxy_path}" ]]; then
-    say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
-    say "[INFO] 尝试手动下载 ${download_url} 保存为 ${wireproxy_path}"
+    say "[FAIL] wireproxy 二进制获取失败。"
+    say "[INFO] 手动修复方法：请下载 ${download_url} 解压并将二进制文件命名为 ${wireproxy_path}"
     return 1
   fi
   chmod +x "${wireproxy_path}"
