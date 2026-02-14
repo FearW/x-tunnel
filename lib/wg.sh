@@ -141,6 +141,10 @@ landing_mode_text(){
   esac
 }
 
+configure_landing(){
+  say "落地模式：0.直连[默认] 1.HTTP落地 2.SOCKS5落地 3.WG落地"
+  read -r -p "请选择落地模式:" landing_mode
+  landing_mode="${landing_mode:-0}"
 valid_hostport(){
   local value="$1"
   local host port
@@ -202,6 +206,34 @@ configure_landing(){
   case "$landing_mode" in
     0) ;;
     1)
+      read -r -p "请输入HTTP落地地址(host:port):" proxy_hostport
+      if [[ -z "${proxy_hostport:-}" ]]; then
+        say "HTTP落地地址不能为空，回退直连"
+        landing_mode="0"
+      else
+        read -r -p "请输入HTTP用户名(可留空):" proxy_user
+        if [[ -n "$proxy_user" ]]; then
+          read -r -p "请输入HTTP密码:" proxy_pass
+          forward_url="http://${proxy_user}:${proxy_pass}@${proxy_hostport}"
+        else
+          forward_url="http://${proxy_hostport}"
+        fi
+      fi
+      ;;
+    2)
+      read -r -p "请输入SOCKS5落地地址(host:port):" proxy_hostport
+      if [[ -z "${proxy_hostport:-}" ]]; then
+        say "SOCKS5落地地址不能为空，回退直连"
+        landing_mode="0"
+      else
+        read -r -p "请输入SOCKS5用户名(可留空):" proxy_user
+        if [[ -n "$proxy_user" ]]; then
+          read -r -p "请输入SOCKS5密码:" proxy_pass
+          forward_url="socks5://${proxy_user}:${proxy_pass}@${proxy_hostport}"
+        else
+          forward_url="socks5://${proxy_hostport}"
+        fi
+      fi
       configure_proxy_landing "1" "http"
       ;;
     2)

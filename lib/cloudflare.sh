@@ -96,6 +96,10 @@ quicktunnel(){
   say "传输优化档位: ${cf_profile}  协议: ${cf_protocol}  并发连接: ${cf_ha_connections}"
   say "系统网络优化(BBR+FQ): ${net_tuned}"
   say "落地模式: $(landing_mode_text "${landing_mode}")"
+  if [[ -n "${forward_url:-}" ]]; then
+    say "落地地址: ${forward_url}"
+  fi
+  say "健康守护: ${guard_enabled:-0}  巡检间隔: ${guard_interval:-15}s"
   say "本地监听 ws 端口: ${wsport}"
 
   if [[ -n "$TRY_DOMAIN" ]]; then
@@ -144,6 +148,10 @@ view_domains(){
     say "传输优化档位: ${cf_profile:-未知}  协议: ${cf_protocol:-未知}  并发连接: ${cf_ha_connections:-未知}"
     say "系统网络优化(BBR+FQ): ${net_tuned:-未知}"
     say "落地模式: $(landing_mode_text "${landing_mode:-0}")  WG-SOCKS端口: ${wg_socks_port:-无}"
+    if [[ -n "${forward_url:-}" ]]; then
+      say "落地地址: ${forward_url}"
+    fi
+    say "健康守护: ${guard_enabled:-0}  巡检间隔: ${guard_interval:-15}s"
     say "本地监听 ws 端口: ${wsport:-未知}"
 
     if [[ -n "${try_domain:-}" ]]; then

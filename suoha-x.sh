@@ -44,6 +44,31 @@ need_cmd ss "$idx" || true
 need_cmd openssl "$idx" || true
 need_cmd nc "$idx" || true
 
+print_install_plan(){
+  say "------------------------------"
+  say "安装向导步骤："
+  say "  1) 选择 Cloudflared 网络与传输档位"
+  say "  2) 选择落地模式（直连/HTTP/SOCKS5/WG）"
+  say "  3) 设置 x-tunnel token 与端口策略"
+  say "  4) 可选绑定 Named Tunnel 域名"
+  say "  5) 可选系统优化与健康守护"
+  say "------------------------------"
+}
+
+confirm_install_plan(){
+  say "安装配置预览："
+  say "  - 落地模式: $(landing_mode_text "${landing_mode:-0}")"
+  if [[ -n "${forward_url:-}" ]]; then
+    say "  - 落地地址: ${forward_url}"
+  fi
+  say "  - 传输协议: ${cf_protocol:-quic}"
+  say "  - 并发连接: ${cf_ha_connections:-2}"
+  say "  - 固定端口: ${fixp:-0}"
+  read -r -p "确认以上配置并开始安装启动？(1.确认[默认],0.返回菜单):" confirm_start
+  confirm_start="${confirm_start:-1}"
+  [[ "$confirm_start" == "1" ]]
+}
+
 if [[ "${1:-}" == "--guard-loop" ]]; then
   load_config || exit 0
   guard_loop
@@ -65,6 +90,7 @@ read -r -p "请选择模式(默认1):" mode
 mode="${mode:-1}"
 
 if [[ "$mode" == "1" ]]; then
+  print_install_plan
   prev_ips="${ips:-4}"
   prev_cf_profile="${cf_profile:-2}"
   prev_token="${token:-}"
@@ -86,6 +112,8 @@ if [[ "$mode" == "1" ]]; then
   fi
 
   say "传输优化档位：1.稳定优先(HTTP2) 2.速度优先(QUIC+2并发) 3.高吞吐优先(QUIC+4并发)"
+  read -r -p "请选择传输优化档位(默认2):" cf_profile
+  cf_profile="${cf_profile:-2}"
   read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
   cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
@@ -100,6 +128,8 @@ if [[ "$mode" == "1" ]]; then
 
   configure_landing
 
+  read -r -p "请设置x-tunnel的token(可留空):" token
+  token="${token:-}"
   read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
   token="${token:-$prev_token}"
 
@@ -153,6 +183,11 @@ if [[ "$mode" == "1" ]]; then
   if [[ "$guard_enabled" == "1" ]]; then
     read -r -p "请输入守护巡检间隔秒数(默认15):" guard_interval
     guard_interval="${guard_interval:-15}"
+  fi
+
+  if ! confirm_install_plan; then
+    say "已取消本次安装启动，返回菜单"
+    exit 0
   fi
 
   screen -wipe >/dev/null 2>&1 || true
