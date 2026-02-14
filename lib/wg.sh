@@ -75,8 +75,13 @@ start_wg_landing(){
       ;;
   esac
 
-  download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "wireproxy-linux"
-  chmod +x wireproxy-linux
+  local script_dir wireproxy_path wireproxy_conf
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  wireproxy_path="${script_dir}/wireproxy-linux"
+  wireproxy_conf="${script_dir}/wireproxy.conf"
+
+  download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "${wireproxy_path}"
+  chmod +x "${wireproxy_path}"
 
   existing_profiles="$(list_wg_profiles || true)"
   if [[ -n "$existing_profiles" ]]; then
@@ -109,7 +114,7 @@ start_wg_landing(){
   fi
 
   wg_socks_port="$(get_free_port)"
-  cat > wireproxy.conf <<EOH
+  cat > "${wireproxy_conf}" <<EOH
 [Interface]
 PrivateKey = ${wg_private_key}
 Address = ${wg_address}
@@ -122,9 +127,9 @@ Endpoint = ${wg_endpoint}
 PersistentKeepalive = 25
 EOH
   if [[ -n "${wg_preshared_key:-}" ]]; then
-    printf 'PresharedKey = %s\n' "$wg_preshared_key" >> wireproxy.conf
+    printf 'PresharedKey = %s\n' "$wg_preshared_key" >> "${wireproxy_conf}"
   fi
-  cat >> wireproxy.conf <<EOH
+  cat >> "${wireproxy_conf}" <<EOH
 
 [Socks5]
 BindAddress = 127.0.0.1:${wg_socks_port}
@@ -134,6 +139,7 @@ EOH
   : > "${wg_log_file}"
 
   stop_screen wg
+  screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
   screen -dmUS wg bash -lc "./wireproxy-linux -c wireproxy.conf >> \"${wg_log_file}\" 2>&1"
   sleep 1
   if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then

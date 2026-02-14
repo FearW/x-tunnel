@@ -98,7 +98,7 @@ say "梭哈模式在重启或者脚本再次运行后失效,如果需要使用�
 printf "\n梭哈是一种智慧!!!梭哈!梭哈!梭哈!梭哈!梭哈!梭哈!梭哈...\n\n"
 say "1.梭哈模式"
 say "2.停止服务"
-say "3.清空缓存"
+say "3.卸载(彻底清理)"
 say "4.域名绑定查看"
 say "5.热切换落地(直连/HTTP/SOCKS5/WG)"
 say "6.健康守护开关"
@@ -235,10 +235,14 @@ elif [[ "$mode" == "3" ]]; then
   stop_screen cfbind
   stop_screen wg
   stop_guard
-  rm -f cloudflared-linux x-tunnel-linux wireproxy-linux wireproxy.conf
+  rm -f "${SCRIPT_DIR}/cloudflared-linux" "${SCRIPT_DIR}/x-tunnel-linux" "${SCRIPT_DIR}/wireproxy-linux" "${SCRIPT_DIR}/wireproxy.conf"
+  rm -f "${HOME}/.suoha_wireproxy.log"
+  rm -rf "${WG_PROFILE_DIR}"
+  rm -rf "${LIB_DIR}"
   remove_config
+  rm -f "${GUARD_LOG_FILE}"
   clear
-  say "已清空缓存（配置记录已清除）"
+  say "已卸载并彻底清理：服务、二进制、lib库、WG配置、日志与配置记录"
 
 elif [[ "$mode" == "4" ]]; then
   view_domains
