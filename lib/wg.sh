@@ -63,6 +63,7 @@ collect_wg_inputs(){
 
 start_wg_landing(){
   local arch wireproxy_bin use_saved wg_profile_name existing_profiles
+  local wg_log_file
   arch="$(uname -m)"
   case "$arch" in
     x86_64|x64|amd64) wireproxy_bin="wireproxy-linux-amd64" ;;
@@ -74,8 +75,20 @@ start_wg_landing(){
       ;;
   esac
 
-  download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "wireproxy-linux"
-  chmod +x wireproxy-linux
+  local script_dir wireproxy_path wireproxy_conf
+  script_dir="${SCRIPT_DIR:-$(pwd)}"
+  wireproxy_path="${script_dir}/wireproxy-linux"
+  wireproxy_conf="${script_dir}/wireproxy.conf"
+
+  download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "${wireproxy_path}"
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    curl -fsSL "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" -o "${wireproxy_path}"
+  fi
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
+    return 1
+  fi
+  chmod +x "${wireproxy_path}"
 
   existing_profiles="$(list_wg_profiles || true)"
   if [[ -n "$existing_profiles" ]]; then
@@ -97,8 +110,18 @@ start_wg_landing(){
     collect_wg_inputs
   fi
 
+  if [[ -z "${wg_private_key:-}" || -z "${wg_address:-}" || -z "${wg_peer_public_key:-}" ]]; then
+    say "[FAIL] WG参数不完整：PrivateKey/Address/Peer PublicKey 不能为空"
+    return 1
+  fi
+
+  if ! valid_hostport "${wg_endpoint:-}"; then
+    say "[FAIL] WG Endpoint 格式错误，请使用 host:port"
+    return 1
+  fi
+
   wg_socks_port="$(get_free_port)"
-  cat > wireproxy.conf <<EOH
+  cat > "${wireproxy_conf}" <<EOH
 [Interface]
 PrivateKey = ${wg_private_key}
 Address = ${wg_address}
@@ -111,16 +134,19 @@ Endpoint = ${wg_endpoint}
 PersistentKeepalive = 25
 EOH
   if [[ -n "${wg_preshared_key:-}" ]]; then
-    printf 'PresharedKey = %s\n' "$wg_preshared_key" >> wireproxy.conf
+    printf 'PresharedKey = %s\n' "$wg_preshared_key" >> "${wireproxy_conf}"
   fi
-  cat >> wireproxy.conf <<EOH
+  cat >> "${wireproxy_conf}" <<EOH
 
 [Socks5]
 BindAddress = 127.0.0.1:${wg_socks_port}
 EOH
 
+  wg_log_file="${HOME}/.suoha_wireproxy.log"
+  : > "${wg_log_file}"
+
   stop_screen wg
-  screen -dmUS wg ./wireproxy-linux -c wireproxy.conf
+  screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
   sleep 1
   if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
@@ -129,6 +155,12 @@ EOH
   fi
 
   say "[FAIL] WG落地启动失败，请检查参数"
+  if [[ -s "${wg_log_file:-}" ]]; then
+    say "[INFO] wireproxy 最近日志："
+    tail -n 20 "${wg_log_file}"
+  else
+    say "[INFO] 未捕获到 wireproxy 日志，可检查 screen 会话: screen -r wg"
+  fi
   return 1
 }
 
@@ -141,13 +173,10 @@ landing_mode_text(){
   esac
 }
 
-configure_landing(){
-  say "落地模式：0.直连[默认] 1.HTTP落地 2.SOCKS5落地 3.WG落地"
-  read -r -p "请选择落地模式:" landing_mode
-  landing_mode="${landing_mode:-0}"
 valid_hostport(){
   local value="$1"
   local host port
+
   if [[ "$value" != *:* ]]; then
     return 1
   fi
@@ -170,6 +199,7 @@ configure_proxy_landing(){
   local mode="$1"
   local scheme="$2"
   local mode_name
+
   if [[ "$mode" == "1" ]]; then
     mode_name="HTTP"
   else
@@ -206,34 +236,6 @@ configure_landing(){
   case "$landing_mode" in
     0) ;;
     1)
-      read -r -p "请输入HTTP落地地址(host:port):" proxy_hostport
-      if [[ -z "${proxy_hostport:-}" ]]; then
-        say "HTTP落地地址不能为空，回退直连"
-        landing_mode="0"
-      else
-        read -r -p "请输入HTTP用户名(可留空):" proxy_user
-        if [[ -n "$proxy_user" ]]; then
-          read -r -p "请输入HTTP密码:" proxy_pass
-          forward_url="http://${proxy_user}:${proxy_pass}@${proxy_hostport}"
-        else
-          forward_url="http://${proxy_hostport}"
-        fi
-      fi
-      ;;
-    2)
-      read -r -p "请输入SOCKS5落地地址(host:port):" proxy_hostport
-      if [[ -z "${proxy_hostport:-}" ]]; then
-        say "SOCKS5落地地址不能为空，回退直连"
-        landing_mode="0"
-      else
-        read -r -p "请输入SOCKS5用户名(可留空):" proxy_user
-        if [[ -n "$proxy_user" ]]; then
-          read -r -p "请输入SOCKS5密码:" proxy_pass
-          forward_url="socks5://${proxy_user}:${proxy_pass}@${proxy_hostport}"
-        else
-          forward_url="socks5://${proxy_hostport}"
-        fi
-      fi
       configure_proxy_landing "1" "http"
       ;;
     2)
