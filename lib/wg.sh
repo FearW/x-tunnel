@@ -62,14 +62,14 @@ collect_wg_inputs(){
 }
 
 start_wg_landing(){
-  local arch wireproxy_bin use_saved wg_profile_name existing_profiles
-  local wg_log_file
-  local wireproxy_candidates wireproxy_url
+  local arch download_bin_name
   arch="$(uname -m)"
+  
+  # 适配 Release 中的文件名 (下划线命名)
   case "$arch" in
-    x86_64|x64|amd64) wireproxy_bin="wireproxy-linux-amd64"; wireproxy_candidates=("wireproxy-linux-amd64" "wireproxy-linux-x86_64") ;;
-    i386|i686) wireproxy_bin="wireproxy-linux-386"; wireproxy_candidates=("wireproxy-linux-386" "wireproxy-linux-i386") ;;
-    armv8|arm64|aarch64) wireproxy_bin="wireproxy-linux-arm64"; wireproxy_candidates=("wireproxy-linux-arm64" "wireproxy-linux-aarch64") ;;
+    x86_64|x64|amd64) download_bin_name="wireproxy_linux_amd64" ;;
+    i386|i686) download_bin_name="wireproxy_linux_386" ;;
+    armv8|arm64|aarch64) download_bin_name="wireproxy_linux_arm64" ;;
     *)
       say "当前架构${arch}不支持 wireguard 落地"
       return 1
@@ -80,32 +80,23 @@ start_wg_landing(){
   script_dir="${SCRIPT_DIR:-$(pwd)}"
   wireproxy_path="${script_dir}/wireproxy-linux"
   wireproxy_conf="${script_dir}/wireproxy.conf"
+  
+  # 使用 v1.0.6 版本，因为该版本提供直连的二进制文件，避免 tar 解压问题
+  local download_url="https://github.com/pufferffish/wireproxy/releases/download/v1.0.6/${download_bin_name}"
 
-  rm -f "${wireproxy_path}"
-  for candidate in "${wireproxy_candidates[@]}"; do
-    wireproxy_url="https://github.com/pufferffish/wireproxy/releases/latest/download/${candidate}"
-    if curl -fsSL "${wireproxy_url}" -o "${wireproxy_path}"; then
-      if [[ -s "${wireproxy_path}" ]]; then
-        break
-      fi
-    fi
-  done
   if [[ ! -s "${wireproxy_path}" ]]; then
-    say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
-    say "[INFO] 已尝试下载: ${wireproxy_candidates[*]}"
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  wireproxy_path="${script_dir}/wireproxy-linux"
-  wireproxy_conf="${script_dir}/wireproxy.conf"
-
-  download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "${wireproxy_path}"
-  if [[ ! -s "${wireproxy_path}" ]]; then
-    curl -fsSL "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" -o "${wireproxy_path}"
+    say "正在下载 Wireproxy..."
+    download_bin "${download_url}" "${wireproxy_path}"
   fi
+  
   if [[ ! -s "${wireproxy_path}" ]]; then
     say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
+    say "[INFO] 尝试手动下载 ${download_url} 保存为 ${wireproxy_path}"
     return 1
   fi
   chmod +x "${wireproxy_path}"
+
+  local use_saved wg_profile_name existing_profiles wg_log_file
 
   existing_profiles="$(list_wg_profiles || true)"
   if [[ -n "$existing_profiles" ]]; then
@@ -164,7 +155,6 @@ EOH
 
   stop_screen wg
   screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
-  screen -dmUS wg bash -lc "./wireproxy-linux -c wireproxy.conf >> \"${wg_log_file}\" 2>&1"
   sleep 1
   if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
