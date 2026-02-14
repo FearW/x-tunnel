@@ -64,12 +64,3 @@ curl https://raw.githubusercontent.com/avotcorg/x-tunnel/main/suoha-x.sh -o suoh
 9. **systemd 模式（可选）**
    - 提供 screen 与 systemd 双运行模式
    - 价值：生产环境更稳、日志接入更标准
-
-## 建议先落地的两个新功能
-
-如果你要我下一步直接开干，我建议先做这两个：
-
-- **功能 A：自动测速选路 + 定时重选最优落地**
-- **功能 B：健康检查守护 + 单组件自愈重启**
-
-这两项对“体感速度”和“稳定在线率”提升最大，且不需要大改整体架构。
