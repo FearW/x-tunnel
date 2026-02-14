@@ -10,6 +10,7 @@ set -euo pipefail
 
 CONFIG_FILE="${HOME}/.suoha_tunnel_config"
 WG_PROFILE_DIR="${HOME}/.suoha_wg_profiles"
+GUARD_LOG_FILE="${HOME}/.suoha_guard.log"
 
 # 传输优化默认参数（可在交互中覆盖）
 cf_protocol="quic"        # quic 在大多数网络下延迟更低、抗抖动更好
@@ -19,6 +20,8 @@ net_tuned="0"            # 0=未优化 1=已尝试应用系统网络优化
 landing_mode="0"         # 0=直连 1=http 2=socks5 3=wireguard
 forward_url=""
 wg_socks_port=""
+guard_enabled="0"      # 0=关闭守护 1=开启守护
+guard_interval="15"    # 守护巡检间隔（秒）
 
 linux_os=("Debian" "Ubuntu" "CentOS" "Fedora" "Alpine")
 linux_update=("apt update" "apt update" "yum -y update" "yum -y update" "apk update")
@@ -75,6 +78,10 @@ stop_screen(){
     sleep 1
   done
 }
+screen_exists(){
+  local name="$1"
+  screen -list 2>/dev/null | grep -q "\.${name}[[:space:]]"
+}
 download_bin(){
   local url="$1" out="$2"
   if [[ ! -f "$out" ]]; then
@@ -83,6 +90,10 @@ download_bin(){
 }
 detect_ws_port(){
   ss -lntp 2>/dev/null | awk '/x-tunnel-linux/ && /127\.0\.0\.1:/ {print $4}' | sed -E 's/.*:([0-9]+)$/\1/' | head -n1
+}
+ws_listening(){
+  local p="$1"
+  [[ -n "$p" ]] && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${p}$"
 }
 http_head(){
   local host="$1"
@@ -197,7 +208,12 @@ save_config(){
     echo "cf_profile=${cf_profile:-2}"
     echo "net_tuned=${net_tuned:-0}"
     echo "landing_mode=${landing_mode:-0}"
+    echo "forward_url=${forward_url:-}"
     echo "wg_socks_port=${wg_socks_port:-}"
+    echo "ips=${ips:-4}"
+    echo "cf_tunnel_token=${cf_tunnel_token:-}"
+    echo "guard_enabled=${guard_enabled:-0}"
+    echo "guard_interval=${guard_interval:-15}"
   } > "$CONFIG_FILE"
 }
 
@@ -422,6 +438,106 @@ start_x_tunnel_service(){
   screen -dmUS x-tunnel ./x-tunnel-linux "${x_args[@]}"
 }
 
+start_argo_service(){
+  if [[ -z "${wsport:-}" ]]; then
+    return 1
+  fi
+
+  if [[ -z "${metricsport:-}" ]]; then
+    metricsport="$(get_free_port)"
+  fi
+
+  screen -dmUS argo ./cloudflared-linux --edge-ip-version "${ips:-4}" --protocol "${cf_protocol:-quic}" tunnel \
+    --url "127.0.0.1:${wsport}" --metrics "0.0.0.0:${metricsport}"
+}
+
+start_cfbind_service(){
+  if [[ "${bind_enable:-0}" != "1" || -z "${cf_tunnel_token:-}" ]]; then
+    return 0
+  fi
+  screen -dmUS cfbind ./cloudflared-linux --edge-ip-version "${ips:-4}" --protocol "${cf_protocol:-quic}" \
+    --ha-connections "${cf_ha_connections:-2}" tunnel run --token "${cf_tunnel_token}"
+}
+
+start_wg_service_from_local_conf(){
+  if [[ ! -f "wireproxy.conf" || ! -x "./wireproxy-linux" ]]; then
+    say "[WARN] wireproxy 配置或二进制缺失，无法自动恢复 WG"
+    return 1
+  fi
+  stop_screen wg
+  screen -dmUS wg ./wireproxy-linux -c wireproxy.conf
+  sleep 1
+  if [[ -n "${wg_socks_port:-}" ]] && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
+    return 0
+  fi
+  say "[WARN] WG 自动恢复失败"
+  return 1
+}
+
+health_check_once(){
+  load_config || return 0
+
+  if [[ -z "${wsport:-}" ]]; then
+    wsport="$(detect_ws_port || true)"
+  fi
+
+  if [[ ! -x ./x-tunnel-linux || ! -x ./cloudflared-linux ]]; then
+    say "[WARN] 二进制缺失，跳过守护自愈"
+    return 0
+  fi
+
+  if [[ "${landing_mode:-0}" == "3" ]]; then
+    if [[ -n "${wg_socks_port:-}" ]] && ! ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
+      say "[GUARD] 检测到 WG socks 失效，尝试恢复"
+      start_wg_service_from_local_conf || true
+    fi
+  fi
+
+  if [[ -z "${wsport:-}" ]] || ! ws_listening "${wsport}"; then
+    say "[GUARD] 检测到 x-tunnel 监听异常，尝试重启"
+    stop_screen x-tunnel
+    start_x_tunnel_service || true
+  elif ! screen_exists x-tunnel; then
+    say "[GUARD] 检测到 x-tunnel 会话丢失，尝试重启"
+    start_x_tunnel_service || true
+  fi
+
+  if ! screen_exists argo; then
+    say "[GUARD] 检测到 argo 会话丢失，尝试重启"
+    stop_screen argo
+    start_argo_service || true
+  fi
+
+  if [[ "${bind_enable:-0}" == "1" && -n "${cf_tunnel_token:-}" ]] && ! screen_exists cfbind; then
+    say "[GUARD] 检测到 cfbind 会话丢失，尝试重启"
+    stop_screen cfbind
+    start_cfbind_service || true
+  fi
+}
+
+guard_loop(){
+  say "[GUARD] 健康守护已启动，巡检间隔: ${guard_interval:-15}s"
+  while true; do
+    health_check_once || true
+    sleep "${guard_interval:-15}"
+  done
+}
+
+start_guard(){
+  guard_enabled="1"
+  if screen_exists guard; then
+    say "[OK] 健康守护已在运行"
+    return
+  fi
+  screen -dmUS guard bash -c "./suoha-x.sh --guard-loop >> '${GUARD_LOG_FILE}' 2>&1"
+  say "[OK] 健康守护已开启，日志: ${GUARD_LOG_FILE}"
+}
+
+stop_guard(){
+  guard_enabled="0"
+  stop_screen guard
+}
+
 hot_switch_landing(){
   if ! load_config; then
     say "未找到运行配置，无法热切换，请先启动(选项1)"
@@ -495,12 +611,10 @@ quicktunnel(){
   metricsport="$(get_free_port)"
   ./cloudflared-linux update >/dev/null 2>&1 || true
 
-  screen -dmUS argo ./cloudflared-linux --edge-ip-version "$ips" --protocol "$cf_protocol" tunnel \
-    --url "127.0.0.1:${wsport}" --metrics "0.0.0.0:${metricsport}"
+  start_argo_service
 
   if [[ "${bind_enable:-0}" == "1" && -n "${cf_tunnel_token:-}" ]]; then
-    screen -dmUS cfbind ./cloudflared-linux --edge-ip-version "$ips" --protocol "$cf_protocol" \
-      --ha-connections "$cf_ha_connections" tunnel run --token "$cf_tunnel_token"
+    start_cfbind_service
   fi
 
   TRY_DOMAIN=""
@@ -515,6 +629,13 @@ quicktunnel(){
 
   # 保存配置，便于后续查看
   save_config
+
+  if [[ "${guard_enabled:-0}" == "1" ]]; then
+    start_guard
+    save_config
+  else
+    stop_guard
+  fi
 
   clear
   say "=============================="
@@ -627,6 +748,12 @@ need_cmd ss "$idx" || true
 need_cmd openssl "$idx" || true
 need_cmd nc "$idx" || true
 
+if [[ "${1:-}" == "--guard-loop" ]]; then
+  load_config || exit 0
+  guard_loop
+  exit 0
+fi
+
 clear
 say "梭哈模式不需要自己提供域名,使用CF ARGO QUICK TUNNEL创建快速链接"
 say "梭哈模式在重启或者脚本再次运行后失效,如果需要使用需要再次运行创建"
@@ -636,6 +763,7 @@ say "2.停止服务"
 say "3.清空缓存"
 say "4.域名绑定查看"
 say "5.热切换落地(直连/HTTP/SOCKS5/WG)"
+say "6.健康守护开关"
 printf "0.退出脚本\n\n"
 read -r -p "请选择模式(默认1):" mode
 mode="${mode:-1}"
@@ -723,6 +851,13 @@ if [[ "$mode" == "1" ]]; then
     net_tuned="0"
   fi
 
+  read -r -p "是否启用健康守护(1.是[默认],0.否):" guard_enabled
+  guard_enabled="${guard_enabled:-1}"
+  if [[ "$guard_enabled" == "1" ]]; then
+    read -r -p "请输入守护巡检间隔秒数(默认15):" guard_interval
+    guard_interval="${guard_interval:-15}"
+  fi
+
   screen -wipe >/dev/null 2>&1 || true
   stop_screen x-tunnel
   stop_screen argo
@@ -739,6 +874,7 @@ elif [[ "$mode" == "2" ]]; then
   stop_screen argo
   stop_screen cfbind
   stop_screen wg
+  stop_guard
   remove_config
   clear
   say "已停止服务（配置记录已清除）"
@@ -749,6 +885,7 @@ elif [[ "$mode" == "3" ]]; then
   stop_screen argo
   stop_screen cfbind
   stop_screen wg
+  stop_guard
   rm -f cloudflared-linux x-tunnel-linux wireproxy-linux wireproxy.conf
   remove_config
   clear
@@ -759,6 +896,22 @@ elif [[ "$mode" == "4" ]]; then
 
 elif [[ "$mode" == "5" ]]; then
   hot_switch_landing
+
+elif [[ "$mode" == "6" ]]; then
+  if load_config; then
+    if screen_exists guard; then
+      stop_guard
+      save_config
+      say "已关闭健康守护"
+    else
+      read -r -p "请输入守护巡检间隔秒数(默认15):" guard_interval
+      guard_interval="${guard_interval:-15}"
+      start_guard
+      save_config
+    fi
+  else
+    say "未找到运行配置，请先启动(选项1)"
+  fi
 
 else
   say "退出成功"
