@@ -93,6 +93,16 @@ start_wg_landing(){
   if [[ ! -s "${wireproxy_path}" ]]; then
     say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
     say "[INFO] 已尝试下载: ${wireproxy_candidates[*]}"
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  wireproxy_path="${script_dir}/wireproxy-linux"
+  wireproxy_conf="${script_dir}/wireproxy.conf"
+
+  download_bin "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" "${wireproxy_path}"
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    curl -fsSL "https://github.com/pufferffish/wireproxy/releases/latest/download/${wireproxy_bin}" -o "${wireproxy_path}"
+  fi
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
     return 1
   fi
   chmod +x "${wireproxy_path}"
@@ -154,6 +164,7 @@ EOH
 
   stop_screen wg
   screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
+  screen -dmUS wg bash -lc "./wireproxy-linux -c wireproxy.conf >> \"${wg_log_file}\" 2>&1"
   sleep 1
   if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"

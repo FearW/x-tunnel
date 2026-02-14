@@ -135,6 +135,7 @@ if [[ "$mode" == "1" ]]; then
     read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
     cf_profile_prompted="1"
   fi
+  read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
   cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
     1) cf_protocol="http2"; cf_ha_connections="1" ;;
@@ -152,6 +153,7 @@ if [[ "$mode" == "1" ]]; then
     read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
     token_prompted="1"
   fi
+  read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
   token="${token:-$prev_token}"
 
   read -r -p "是否固定ws端口(0.不固定[默认],1.固定):" fixp
