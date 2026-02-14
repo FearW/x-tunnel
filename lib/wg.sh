@@ -64,11 +64,12 @@ collect_wg_inputs(){
 start_wg_landing(){
   local arch wireproxy_bin use_saved wg_profile_name existing_profiles
   local wg_log_file
+  local wireproxy_candidates wireproxy_url
   arch="$(uname -m)"
   case "$arch" in
-    x86_64|x64|amd64) wireproxy_bin="wireproxy-linux-amd64" ;;
-    i386|i686) wireproxy_bin="wireproxy-linux-386" ;;
-    armv8|arm64|aarch64) wireproxy_bin="wireproxy-linux-arm64" ;;
+    x86_64|x64|amd64) wireproxy_bin="wireproxy-linux-amd64"; wireproxy_candidates=("wireproxy-linux-amd64" "wireproxy-linux-x86_64") ;;
+    i386|i686) wireproxy_bin="wireproxy-linux-386"; wireproxy_candidates=("wireproxy-linux-386" "wireproxy-linux-i386") ;;
+    armv8|arm64|aarch64) wireproxy_bin="wireproxy-linux-arm64"; wireproxy_candidates=("wireproxy-linux-arm64" "wireproxy-linux-aarch64") ;;
     *)
       say "当前架构${arch}不支持 wireguard 落地"
       return 1
@@ -77,6 +78,21 @@ start_wg_landing(){
 
   local script_dir wireproxy_path wireproxy_conf
   script_dir="${SCRIPT_DIR:-$(pwd)}"
+  wireproxy_path="${script_dir}/wireproxy-linux"
+  wireproxy_conf="${script_dir}/wireproxy.conf"
+
+  rm -f "${wireproxy_path}"
+  for candidate in "${wireproxy_candidates[@]}"; do
+    wireproxy_url="https://github.com/pufferffish/wireproxy/releases/latest/download/${candidate}"
+    if curl -fsSL "${wireproxy_url}" -o "${wireproxy_path}"; then
+      if [[ -s "${wireproxy_path}" ]]; then
+        break
+      fi
+    fi
+  done
+  if [[ ! -s "${wireproxy_path}" ]]; then
+    say "[FAIL] wireproxy 二进制下载失败: ${wireproxy_path}"
+    say "[INFO] 已尝试下载: ${wireproxy_candidates[*]}"
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   wireproxy_path="${script_dir}/wireproxy-linux"
   wireproxy_conf="${script_dir}/wireproxy.conf"

@@ -129,8 +129,6 @@ if [[ "$mode" == "1" ]]; then
   fi
 
   say "传输优化档位：1.稳定优先(HTTP2) 2.速度优先(QUIC+2并发) 3.高吞吐优先(QUIC+4并发)"
-  read -r -p "请选择传输优化档位(默认2):" cf_profile
-  cf_profile="${cf_profile:-2}"
   read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
   cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
@@ -145,8 +143,6 @@ if [[ "$mode" == "1" ]]; then
 
   configure_landing
 
-  read -r -p "请设置x-tunnel的token(可留空):" token
-  token="${token:-}"
   read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
   token="${token:-$prev_token}"
 
