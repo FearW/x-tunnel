@@ -51,8 +51,8 @@ collect_wg_inputs(){
   read -r -p "请输入Peer公钥(PublicKey):" wg_peer_public_key
   read -r -p "请输入Peer预共享密钥(PresharedKey,可留空):" wg_preshared_key
   read -r -p "请输入Peer端点(Endpoint, 如1.2.3.4:51820):" wg_endpoint
-  read -r -p "请输入AllowedIPs(默认0.0.0.0/0,::/0):" wg_allowed_ips
-  wg_allowed_ips="${wg_allowed_ips:-0.0.0.0/0,::/0}"
+  read -r -p "请输入AllowedIPs(默认0.0.0.0/0):" wg_allowed_ips
+  wg_allowed_ips="${wg_allowed_ips:-0.0.0.0/0}"
 
   read -r -p "是否保存该WG配置供后续热切换使用(1.是,0.否,默认1):" save_wg
   save_wg="${save_wg:-1}"
