@@ -43,7 +43,7 @@ start_wg_service_from_local_conf(){
   stop_screen wg
   screen -dmUS wg "${wireproxy_path}" -c "${wireproxy_conf}"
   sleep 1
-  if [[ -n "${wg_socks_port:-}" ]] && ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
+  if [[ -n "${wg_socks_port:-}" ]] && check_port_listening "${wg_socks_port}"; then
     return 0
   fi
   say "[WARN] WG 自动恢复失败"
