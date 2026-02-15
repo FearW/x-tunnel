@@ -75,7 +75,6 @@ check_port_listening(){
   fi
 }
 
-# 落地可用性探测：HTTP/SOCKS5 用 curl，WG 用端口检测+curl
 verify_landing(){
   local mode="${1:-0}"
   local url="${2:-}"
@@ -83,13 +82,12 @@ verify_landing(){
 
   case "$mode" in
     1)
-      # HTTP 代理检测
       if [[ -z "$url" ]]; then
         say "[CHECK] HTTP落地地址为空，跳过检测"
         return 1
       fi
       say "[CHECK] 正在检测HTTP代理可用性..."
-      if curl -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
+      if curl -4 -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
         say "[CHECK] HTTP代理可用 ✓"
         return 0
       else
@@ -98,13 +96,13 @@ verify_landing(){
       fi
       ;;
     2)
-      # SOCKS5 代理检测
       if [[ -z "$url" ]]; then
         say "[CHECK] SOCKS5落地地址为空，跳过检测"
         return 1
       fi
+      local check_url="${url/socks5:\/\//socks5h:\/\/}"
       say "[CHECK] 正在检测SOCKS5代理可用性..."
-      if curl -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
+      if curl -4 -x "$check_url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
         say "[CHECK] SOCKS5代理可用 ✓"
         return 0
       else
@@ -113,7 +111,6 @@ verify_landing(){
       fi
       ;;
     3)
-      # WG 落地检测：先检端口，再通过 socks 出口测连通
       local wg_port="${wg_socks_port:-}"
       if [[ -z "$wg_port" ]]; then
         say "[CHECK] WG SOCKS端口未知，跳过检测"
@@ -124,11 +121,11 @@ verify_landing(){
         say "[CHECK] WG SOCKS端口 ${wg_port} 未监听 ✗"
         return 1
       fi
-      if curl -x "socks5://127.0.0.1:${wg_port}" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
+      if curl -4 -x "socks5h://127.0.0.1:${wg_port}" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
         say "[CHECK] WG落地可用 ✓ (socks5://127.0.0.1:${wg_port})"
         return 0
       else
-        say "[CHECK] WG SOCKS端口已监听但出口不通 ✗"
+        say "[CHECK] WG落地出口不通 ✗"
         return 1
       fi
       ;;
@@ -254,9 +251,18 @@ EOH
 
   stop_screen wg
   screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
-  sleep 2
 
-  if check_port_listening "${wg_socks_port}"; then
+  # 等待 wireproxy 启动，最多 10 秒
+  local wg_ready=0
+  for _ in $(seq 1 10); do
+    if check_port_listening "${wg_socks_port}"; then
+      wg_ready=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ "$wg_ready" == "1" ]]; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
     say "[OK] WG落地已启动，本地Socks5: 127.0.0.1:${wg_socks_port}"
     verify_landing "3" "$forward_url"
@@ -336,7 +342,6 @@ configure_proxy_landing(){
     forward_url="${scheme}://${proxy_hostport}"
   fi
 
-  # 配置完成后立即检测可用性
   verify_landing "$mode" "$forward_url"
 }
 
