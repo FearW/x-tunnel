@@ -9,7 +9,6 @@ save_wg_profile(){
   local name="$1" path
   mkdir -p "$WG_PROFILE_DIR"
   path="$(wg_profile_path "$name")"
-  # 值加引号，防止空格和特殊字符
   cat > "$path" <<EOH
 wg_private_key="${wg_private_key}"
 wg_address="${wg_address}"
@@ -25,7 +24,6 @@ EOH
 
 list_wg_profiles(){
   if [[ -d "$WG_PROFILE_DIR" ]]; then
-    # 不依赖 -printf，兼容 Alpine/macOS
     for f in "${WG_PROFILE_DIR}"/*.conf; do
       [[ -f "$f" ]] || continue
       basename "$f" .conf
@@ -66,7 +64,6 @@ collect_wg_inputs(){
   fi
 }
 
-# 检测端口是否在监听，兼容 ss 不可用的情况
 check_port_listening(){
   local port="$1"
   if command -v ss &>/dev/null; then
@@ -74,9 +71,72 @@ check_port_listening(){
   elif command -v netstat &>/dev/null; then
     netstat -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${port}$"
   else
-    # 最后用 /dev/tcp 探测
     (echo >/dev/tcp/127.0.0.1/"${port}") 2>/dev/null
   fi
+}
+
+# 落地可用性探测：HTTP/SOCKS5 用 curl，WG 用端口检测+curl
+verify_landing(){
+  local mode="${1:-0}"
+  local url="${2:-}"
+  local timeout=5
+
+  case "$mode" in
+    1)
+      # HTTP 代理检测
+      if [[ -z "$url" ]]; then
+        say "[CHECK] HTTP落地地址为空，跳过检测"
+        return 1
+      fi
+      say "[CHECK] 正在检测HTTP代理可用性..."
+      if curl -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
+        say "[CHECK] HTTP代理可用 ✓"
+        return 0
+      else
+        say "[CHECK] HTTP代理不可用 ✗ (地址: ${url})"
+        return 1
+      fi
+      ;;
+    2)
+      # SOCKS5 代理检测
+      if [[ -z "$url" ]]; then
+        say "[CHECK] SOCKS5落地地址为空，跳过检测"
+        return 1
+      fi
+      say "[CHECK] 正在检测SOCKS5代理可用性..."
+      if curl -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
+        say "[CHECK] SOCKS5代理可用 ✓"
+        return 0
+      else
+        say "[CHECK] SOCKS5代理不可用 ✗ (地址: ${url})"
+        return 1
+      fi
+      ;;
+    3)
+      # WG 落地检测：先检端口，再通过 socks 出口测连通
+      local wg_port="${wg_socks_port:-}"
+      if [[ -z "$wg_port" ]]; then
+        say "[CHECK] WG SOCKS端口未知，跳过检测"
+        return 1
+      fi
+      say "[CHECK] 正在检测WG落地可用性..."
+      if ! check_port_listening "$wg_port"; then
+        say "[CHECK] WG SOCKS端口 ${wg_port} 未监听 ✗"
+        return 1
+      fi
+      if curl -x "socks5://127.0.0.1:${wg_port}" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
+        say "[CHECK] WG落地可用 ✓ (socks5://127.0.0.1:${wg_port})"
+        return 0
+      else
+        say "[CHECK] WG SOCKS端口已监听但出口不通 ✗"
+        return 1
+      fi
+      ;;
+    0|*)
+      say "[CHECK] 直连模式，无需落地检测 ✓"
+      return 0
+      ;;
+  esac
 }
 
 start_wg_landing(){
@@ -107,22 +167,17 @@ start_wg_landing(){
     if curl -fsSL "${download_url}" -o "${tmp_dir}/wireproxy.tar.gz"; then
       say "下载成功，正在解压..."
       tar -xzf "${tmp_dir}/wireproxy.tar.gz" -C "${tmp_dir}" >/dev/null 2>&1
-
-      # 在临时目录中查找 wireproxy 二进制
       local found_bin=""
       if [[ -f "${tmp_dir}/wireproxy" ]]; then
         found_bin="${tmp_dir}/wireproxy"
       else
-        # 搜索解压出的可执行文件
         found_bin="$(find "${tmp_dir}" -type f -name 'wireproxy*' ! -name '*.tar.gz' | head -n1)"
       fi
-
       if [[ -n "$found_bin" && -f "$found_bin" ]]; then
         mv "$found_bin" "${wireproxy_path}"
       else
         say "[FAIL] 解压后未找到 wireproxy 二进制文件"
       fi
-      # 清理临时目录
       rm -rf "${tmp_dir}"
     else
       rm -rf "${tmp_dir}"
@@ -171,7 +226,6 @@ start_wg_landing(){
 
   wg_socks_port="$(get_free_port)"
 
-  # 生成配置文件，PresharedKey 写在 [Peer] 段内
   {
     cat <<EOH
 [Interface]
@@ -200,10 +254,12 @@ EOH
 
   stop_screen wg
   screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
-  sleep 1
+  sleep 2
+
   if check_port_listening "${wg_socks_port}"; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
     say "[OK] WG落地已启动，本地Socks5: 127.0.0.1:${wg_socks_port}"
+    verify_landing "3" "$forward_url"
     return 0
   fi
 
@@ -234,7 +290,6 @@ valid_hostport(){
     return 1
   fi
 
-  # 支持 IPv6 格式 [::1]:port
   if [[ "$value" == \[*\]:* ]]; then
     host="${value%]:*}]"
     port="${value##*]:}"
@@ -280,6 +335,9 @@ configure_proxy_landing(){
   else
     forward_url="${scheme}://${proxy_hostport}"
   fi
+
+  # 配置完成后立即检测可用性
+  verify_landing "$mode" "$forward_url"
 }
 
 configure_landing(){
