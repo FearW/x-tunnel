@@ -6,7 +6,7 @@ WG_PROFILE_DIR="${HOME}/.suoha_wg_profiles"
 GUARD_LOG_FILE="${HOME}/.suoha_guard.log"
 
 cf_protocol="quic"
-cf_ha_connections="4"
+cf_ha_connections="2"
 cf_profile="2"
 cf_profile_prompted="0"
 net_tuned="0"
@@ -29,12 +29,27 @@ if [[ ! -d "${LIB_DIR}" ]]; then
   mkdir -p "${LIB_DIR}"
 fi
 
+# lib 文件 sha256 校验表（按需更新）
+declare -A LIB_CHECKSUMS=(
+  # 如果你有校验值，填在这里，例如：
+  # ["common.sh"]="abc123..."
+)
+
 for lib_file in common.sh net.sh config.sh wg.sh services.sh guard.sh cloudflare.sh; do
   if [[ ! -f "${LIB_DIR}/${lib_file}" ]]; then
     curl -fsSL "${REMOTE_LIB_BASE}/${lib_file}" -o "${LIB_DIR}/${lib_file}" || {
       echo "[ERROR] 缺少 ${lib_file} 且自动下载失败，请完整下载仓库后再运行。"
       exit 1
     }
+    # 如果有校验值则验证
+    if [[ -n "${LIB_CHECKSUMS[${lib_file}]:-}" ]]; then
+      actual_sum="$(sha256sum "${LIB_DIR}/${lib_file}" | awk '{print $1}')"
+      if [[ "$actual_sum" != "${LIB_CHECKSUMS[${lib_file}]}" ]]; then
+        echo "[ERROR] ${lib_file} 校验失败，文件可能被篡改，已删除。"
+        rm -f "${LIB_DIR}/${lib_file}"
+        exit 1
+      fi
+    fi
   fi
 done
 
@@ -59,10 +74,17 @@ need_cmd curl "$idx"
 need_cmd sed "$idx"
 need_cmd grep "$idx"
 need_cmd awk "$idx"
-need_cmd ss "$idx" || true
-need_cmd openssl "$idx" || true
-need_cmd nc "$idx" || true
-need_cmd tar "$idx" || true
+
+# 可选依赖：缺失时仅警告
+for optional_cmd in ss openssl nc tar; do
+  if ! command -v "$optional_cmd" &>/dev/null; then
+    echo "[WARN] 可选命令 ${optional_cmd} 未安装，部分功能可能不可用"
+  fi
+done
+
+cleanup_screens(){
+  screen -wipe >/dev/null 2>&1 || true
+}
 
 print_install_plan(){
   say "------------------------------"
@@ -132,10 +154,7 @@ if [[ "$mode" == "1" ]]; then
   fi
 
   say "传输优化档位：1.稳定优先(HTTP2) 2.速度优先(QUIC+2并发) 3.高吞吐优先(QUIC+4并发)"
-  if [[ "${cf_profile_prompted}" != "1" ]]; then
-    read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
-    cf_profile_prompted="1"
-  fi
+  read -r -p "请选择传输优化档位(默认${prev_cf_profile}):" cf_profile
   cf_profile="${cf_profile:-$prev_cf_profile}"
   case "$cf_profile" in
     1) cf_protocol="http2"; cf_ha_connections="1" ;;
@@ -149,10 +168,6 @@ if [[ "$mode" == "1" ]]; then
 
   configure_landing
 
-  if [[ "${token_prompted}" != "1" ]]; then
-    read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
-    token_prompted="1"
-  fi
   read -r -p "请设置x-tunnel的token(可留空，默认沿用上次):" token
   token="${token:-$prev_token}"
 
@@ -213,7 +228,7 @@ if [[ "$mode" == "1" ]]; then
     exit 0
   fi
 
-  screen -wipe >/dev/null 2>&1 || true
+  cleanup_screens
   stop_screen x-tunnel
   stop_screen argo
   stop_screen cfbind
@@ -224,18 +239,18 @@ if [[ "$mode" == "1" ]]; then
   quicktunnel
 
 elif [[ "$mode" == "2" ]]; then
-  screen -wipe >/dev/null 2>&1 || true
+  cleanup_screens
   stop_screen x-tunnel
   stop_screen argo
   stop_screen cfbind
   stop_screen wg
   stop_guard
-  remove_config
+  # 停止服务时保留配置，方便下次快速启动
   clear
-  say "已停止服务（配置记录已清除）"
+  say "已停止服务（配置已保留，下次启动可沿用）"
 
 elif [[ "$mode" == "3" ]]; then
-  screen -wipe >/dev/null 2>&1 || true
+  cleanup_screens
   stop_screen x-tunnel
   stop_screen argo
   stop_screen cfbind
