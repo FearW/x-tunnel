@@ -23,8 +23,11 @@ hot_switch_landing(){
   start_x_tunnel_service
   save_config
 
-  say "[OK] 热切换完成，当前落地模式: $(landing_mode_text "${landing_mode:-0}")"
-  self_check "${bind_domain:-}" "${try_domain:-}" "${wsport:-}"
+  # 热切换后只输出可用性和切换结果
+  say "------------------------------"
+  verify_landing "${landing_mode:-0}" "${forward_url:-}"
+  say "[OK] 热切换完成 -> $(landing_mode_text "${landing_mode:-0}")"
+  say "------------------------------"
 }
 
 quicktunnel(){
@@ -49,7 +52,7 @@ quicktunnel(){
   chmod +x cloudflared-linux x-tunnel-linux
 
   if [[ -n "${wsport:-}" ]]; then
-    if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wsport}$"; then
+    if check_port_listening "${wsport}"; then
       say "[ERROR] 固定端口 ${wsport} 已被占用，请手动释放或选择其他端口"
       exit 1
     fi
@@ -91,107 +94,57 @@ quicktunnel(){
 
   clear
   say "=============================="
-  say "梭哈模式：启动完成（配置已保存，可用选项4查看）"
-  say "------------------------------"
-  say "传输优化档位: ${cf_profile}  协议: ${cf_protocol}  并发连接: ${cf_ha_connections}"
-  say "系统网络优化(BBR+FQ): ${net_tuned}"
-  say "落地模式: $(landing_mode_text "${landing_mode}")"
-  if [[ -n "${forward_url:-}" ]]; then
-    say "落地地址: ${forward_url}"
-  fi
-  say "健康守护: ${guard_enabled:-0}  巡检间隔: ${guard_interval:-15}s"
-  say "本地监听 ws 端口: ${wsport}"
 
+  # 精简输出：只显示域名:443 和 token
   if [[ -n "$TRY_DOMAIN" ]]; then
-    if [[ -z "${token:-}" ]]; then
-      say "【临时域名 Quick Tunnel】 ${TRY_DOMAIN}:443"
-    else
-      say "【临时域名 Quick Tunnel】 ${TRY_DOMAIN}:443   身份令牌: ${token}"
-    fi
+    say "【Quick Tunnel】 ${TRY_DOMAIN}:443"
   else
-    say "【临时域名 Quick Tunnel】未解析到（可稍后查看 metrics）"
+    say "【Quick Tunnel】 未解析到域名（可稍后用选项4查看）"
   fi
 
-  if [[ "${bind_enable:-0}" == "1" ]]; then
-    if [[ -n "${bind_domain:-}" ]]; then
-      if [[ -z "${token:-}" ]]; then
-        say "【绑定域名 Named Tunnel】 ${bind_domain}:443"
-      else
-        say "【绑定域名 Named Tunnel】 ${bind_domain}:443   身份令牌: ${token}"
-      fi
-      say "（请确保 Cloudflare 面板 Public Hostname 已正确指向 http://127.0.0.1:${wsport}）"
-    else
-      say "【绑定域名 Named Tunnel】已启用（未提供具体域名，仅后台运行）"
-      say "（请在 Cloudflare 面板配置 Public Hostname 指向 http://127.0.0.1:${wsport}）"
-    fi
-  else
-    say "【绑定域名 Named Tunnel】未启用"
+  if [[ "${bind_enable:-0}" == "1" && -n "${bind_domain:-}" ]]; then
+    say "【Named Tunnel】 ${bind_domain}:443"
   fi
 
-  PUBIP="$(curl -4 -s https://www.cloudflare.com/cdn-cgi/trace | grep ip= | cut -d= -f2 || true)"
-  if [[ -n "$PUBIP" ]]; then
-    say "metrics: http://${PUBIP}:${metricsport}/metrics"
-  else
-    say "metrics: http://<你的公网IP>:${metricsport}/metrics"
+  if [[ -n "${token:-}" ]]; then
+    say "【Token】 ${token}"
   fi
+
   say "=============================="
 
-  self_check "${bind_domain:-}" "${TRY_DOMAIN:-}" "${wsport:-}"
+  # 落地可用性检测
+  verify_landing "${landing_mode:-0}" "${forward_url:-}"
 }
 
 view_domains(){
   clear
   if load_config; then
     say "=============================="
-    say "域名绑定查看（读取上次启动保存的配置）"
+    say "域名绑定查看"
     say "------------------------------"
-    say "传输优化档位: ${cf_profile:-未知}  协议: ${cf_protocol:-未知}  并发连接: ${cf_ha_connections:-未知}"
-    say "系统网络优化(BBR+FQ): ${net_tuned:-未知}"
-    say "落地模式: $(landing_mode_text "${landing_mode:-0}")  WG-SOCKS端口: ${wg_socks_port:-无}"
-    if [[ -n "${forward_url:-}" ]]; then
-      say "落地地址: ${forward_url}"
-    fi
-    say "健康守护: ${guard_enabled:-0}  巡检间隔: ${guard_interval:-15}s"
-    say "本地监听 ws 端口: ${wsport:-未知}"
 
     if [[ -n "${try_domain:-}" ]]; then
-      if [[ -z "${token:-}" ]]; then
-        say "【临时域名 Quick Tunnel】 ${try_domain}:443"
-      else
-        say "【临时域名 Quick Tunnel】 ${try_domain}:443   身份令牌: ${token}"
-      fi
+      say "【Quick Tunnel】 ${try_domain}:443"
     else
-      say "【临时域名 Quick Tunnel】无记录（可能上次未解析成功）"
+      say "【Quick Tunnel】 无记录"
     fi
 
-    if [[ "${bind_enable:-0}" == "1" ]]; then
-      if [[ -n "${bind_domain:-}" ]]; then
-        if [[ -z "${token:-}" ]]; then
-          say "【绑定域名 Named Tunnel】 ${bind_domain}:443"
-        else
-          say "【绑定域名 Named Tunnel】 ${bind_domain}:443   身份令牌: ${token}"
-        fi
-      else
-        say "【绑定域名 Named Tunnel】已启用（上次未提供具体域名）"
-      fi
-      say "（请确保 Cloudflare 面板 Public Hostname 已正确指向 http://127.0.0.1:${wsport:-未知}）"
-    else
-      say "【绑定域名 Named Tunnel】未启用"
+    if [[ "${bind_enable:-0}" == "1" && -n "${bind_domain:-}" ]]; then
+      say "【Named Tunnel】 ${bind_domain}:443"
     fi
 
-    if [[ -n "${metricsport:-}" ]]; then
-      PUBIP="$(curl -4 -s https://www.cloudflare.com/cdn-cgi/trace | grep ip= | cut -d= -f2 || true)"
-      if [[ -n "$PUBIP" ]]; then
-        say "metrics: http://${PUBIP}:${metricsport}/metrics"
-      else
-        say "metrics: http://<你的公网IP>:${metricsport}/metrics"
-      fi
+    if [[ -n "${token:-}" ]]; then
+      say "【Token】 ${token}"
     fi
+
+    say "------------------------------"
+    say "落地模式: $(landing_mode_text "${landing_mode:-0}")"
+    say "ws端口: ${wsport:-未知}"
+    say "健康守护: ${guard_enabled:-0}"
     say "=============================="
 
-    self_check "${bind_domain:-}" "${try_domain:-}" "${wsport:-}"
+    verify_landing "${landing_mode:-0}" "${forward_url:-}"
   else
-    say "未找到上次启动的配置记录（可能未启动过或已清理）"
-    say "请先运行选项1启动服务"
+    say "未找到配置记录，请先运行选项1启动服务"
   fi
 }
