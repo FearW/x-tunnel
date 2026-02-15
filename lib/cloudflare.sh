@@ -23,7 +23,6 @@ hot_switch_landing(){
   start_x_tunnel_service
   save_config
 
-  # 热切换后只输出可用性和切换结果
   say "------------------------------"
   verify_landing "${landing_mode:-0}" "${forward_url:-}"
   say "[OK] 热切换完成 -> $(landing_mode_text "${landing_mode:-0}")"
@@ -95,7 +94,6 @@ quicktunnel(){
   clear
   say "=============================="
 
-  # 精简输出：只显示域名:443 和 token
   if [[ -n "$TRY_DOMAIN" ]]; then
     say "【Quick Tunnel】 ${TRY_DOMAIN}:443"
   else
@@ -112,7 +110,6 @@ quicktunnel(){
 
   say "=============================="
 
-  # 落地可用性检测
   verify_landing "${landing_mode:-0}" "${forward_url:-}"
 }
 
