@@ -11,7 +11,7 @@ health_check_once(){
   fi
 
   if [[ "${landing_mode:-0}" == "3" ]]; then
-    if [[ -n "${wg_socks_port:-}" ]] && ! ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wg_socks_port}$"; then
+    if [[ -n "${wg_socks_port:-}" ]] && ! check_port_listening "${wg_socks_port}"; then
       say "[GUARD] 检测到 WG socks 失效，尝试恢复"
       start_wg_service_from_local_conf || true
     fi
