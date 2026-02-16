@@ -40,9 +40,10 @@ start_wg_service_from_local_conf(){
     say "[WARN] wireproxy 配置或二进制缺失，无法自动恢复 WG"
     return 1
   fi
-  stop_screen wg
+  # 彻底清理旧进程再启动
+  kill_wireproxy
   screen -dmUS wg "${wireproxy_path}" -c "${wireproxy_conf}"
-  sleep 1
+  sleep 2
   if [[ -n "${wg_socks_port:-}" ]] && check_port_listening "${wg_socks_port}"; then
     return 0
   fi
