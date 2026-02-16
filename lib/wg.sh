@@ -78,7 +78,7 @@ check_port_listening(){
 verify_landing(){
   local mode="${1:-0}"
   local url="${2:-}"
-  local timeout=5
+  local timeout=8
 
   case "$mode" in
     1)
@@ -87,8 +87,10 @@ verify_landing(){
         return 1
       fi
       say "[CHECK] 正在检测HTTP代理可用性..."
-      if curl -4 -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
-        say "[CHECK] HTTP代理可用 ✓"
+      local http_code
+      http_code="$(curl -4 -x "$url" -s --connect-timeout "$timeout" -o /dev/null -w '%{http_code}' "http://cp.cloudflare.com" 2>/dev/null || echo "000")"
+      if [[ "$http_code" != "000" ]]; then
+        say "[CHECK] HTTP代理可用 ✓ (HTTP ${http_code})"
         return 0
       else
         say "[CHECK] HTTP代理不可用 ✗ (地址: ${url})"
@@ -102,8 +104,10 @@ verify_landing(){
       fi
       local check_url="${url/socks5:\/\//socks5h:\/\/}"
       say "[CHECK] 正在检测SOCKS5代理可用性..."
-      if curl -4 -x "$check_url" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
-        say "[CHECK] SOCKS5代理可用 ✓"
+      local http_code
+      http_code="$(curl -4 -x "$check_url" -s --connect-timeout "$timeout" -o /dev/null -w '%{http_code}' "http://cp.cloudflare.com" 2>/dev/null || echo "000")"
+      if [[ "$http_code" != "000" ]]; then
+        say "[CHECK] SOCKS5代理可用 ✓ (HTTP ${http_code})"
         return 0
       else
         say "[CHECK] SOCKS5代理不可用 ✗ (地址: ${url})"
@@ -121,8 +125,10 @@ verify_landing(){
         say "[CHECK] WG SOCKS端口 ${wg_port} 未监听 ✗"
         return 1
       fi
-      if curl -4 -x "socks5h://127.0.0.1:${wg_port}" -s --connect-timeout "$timeout" -o /dev/null -w '' "http://www.gstatic.com/generate_204" 2>/dev/null; then
-        say "[CHECK] WG落地可用 ✓ (socks5://127.0.0.1:${wg_port})"
+      local http_code
+      http_code="$(curl -4 -x "socks5h://127.0.0.1:${wg_port}" -s --connect-timeout "$timeout" -o /dev/null -w '%{http_code}' "http://cp.cloudflare.com" 2>/dev/null || echo "000")"
+      if [[ "$http_code" != "000" ]]; then
+        say "[CHECK] WG落地可用 ✓ (socks5://127.0.0.1:${wg_port}, HTTP ${http_code})"
         return 0
       else
         say "[CHECK] WG落地出口不通 ✗"
@@ -252,7 +258,6 @@ EOH
   stop_screen wg
   screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
 
-  # 等待 wireproxy 启动，最多 10 秒
   local wg_ready=0
   for _ in $(seq 1 10); do
     if check_port_listening "${wg_socks_port}"; then
