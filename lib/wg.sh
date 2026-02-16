@@ -75,12 +75,10 @@ check_port_listening(){
   fi
 }
 
-# 彻底停止 wireproxy：先关 screen，再杀残留进程
 kill_wireproxy(){
   stop_screen wg
   pkill -f wireproxy-linux 2>/dev/null || true
   sleep 1
-  # 如果还有残留，强杀
   if pgrep -f wireproxy-linux &>/dev/null; then
     pkill -9 -f wireproxy-linux 2>/dev/null || true
     sleep 1
@@ -239,12 +237,10 @@ start_wg_landing(){
     return 1
   fi
 
-  # 彻底清理旧的 wireproxy 进程
   kill_wireproxy
 
   wg_log_file="${HOME}/.suoha_wireproxy.log"
 
-  # 最多重试 3 次分配端口并启动
   local wg_start_ok=0
   local wg_try
   for wg_try in 1 2 3; do
@@ -275,7 +271,7 @@ EOH
 
     : > "${wg_log_file}"
 
-    screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
+    screen -dmUS wg sh -c "exec \"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
 
     local wg_ready=0
     for _ in $(seq 1 10); do
