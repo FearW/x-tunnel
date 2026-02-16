@@ -16,7 +16,7 @@ hot_switch_landing(){
   configure_landing
 
   if [[ "${landing_mode:-0}" != "3" ]]; then
-    stop_screen wg
+    kill_wireproxy
   fi
 
   stop_screen x-tunnel
