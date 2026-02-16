@@ -79,17 +79,12 @@ check_port_listening(){
 kill_wireproxy(){
   stop_screen wg
   pkill -f wireproxy-linux 2>/dev/null || true
-  # 等待进程完全退出
-  local i
-  for i in $(seq 1 5); do
-    if ! pgrep -f wireproxy-linux &>/dev/null; then
-      return 0
-    fi
-    sleep 1
-  done
-  # 强杀
-  pkill -9 -f wireproxy-linux 2>/dev/null || true
   sleep 1
+  # 如果还有残留，强杀
+  if pgrep -f wireproxy-linux &>/dev/null; then
+    pkill -9 -f wireproxy-linux 2>/dev/null || true
+    sleep 1
+  fi
 }
 
 verify_landing(){
@@ -288,7 +283,6 @@ EOH
         wg_ready=1
         break
       fi
-      # 端口冲突导致退出，立即重试
       if [[ -s "${wg_log_file}" ]] && grep -q "address already in use" "${wg_log_file}"; then
         say "[WARN] 端口 ${wg_socks_port} 被占用，重试第 ${wg_try} 次..."
         kill_wireproxy
