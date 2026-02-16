@@ -75,6 +75,23 @@ check_port_listening(){
   fi
 }
 
+# 彻底停止 wireproxy：先关 screen，再杀残留进程
+kill_wireproxy(){
+  stop_screen wg
+  pkill -f wireproxy-linux 2>/dev/null || true
+  # 等待进程完全退出
+  local i
+  for i in $(seq 1 5); do
+    if ! pgrep -f wireproxy-linux &>/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
+  # 强杀
+  pkill -9 -f wireproxy-linux 2>/dev/null || true
+  sleep 1
+}
+
 verify_landing(){
   local mode="${1:-0}"
   local url="${2:-}"
@@ -227,10 +244,19 @@ start_wg_landing(){
     return 1
   fi
 
-  wg_socks_port="$(get_free_port)"
+  # 彻底清理旧的 wireproxy 进程
+  kill_wireproxy
 
-  {
-    cat <<EOH
+  wg_log_file="${HOME}/.suoha_wireproxy.log"
+
+  # 最多重试 3 次分配端口并启动
+  local wg_start_ok=0
+  local wg_try
+  for wg_try in 1 2 3; do
+    wg_socks_port="$(get_free_port)"
+
+    {
+      cat <<EOH
 [Interface]
 PrivateKey = ${wg_private_key}
 Address = ${wg_address}
@@ -242,39 +268,49 @@ AllowedIPs = ${wg_allowed_ips}
 Endpoint = ${wg_endpoint}
 PersistentKeepalive = 25
 EOH
-    if [[ -n "${wg_preshared_key:-}" ]]; then
-      printf 'PresharedKey = %s\n' "$wg_preshared_key"
-    fi
-    cat <<EOH
+      if [[ -n "${wg_preshared_key:-}" ]]; then
+        printf 'PresharedKey = %s\n' "$wg_preshared_key"
+      fi
+      cat <<EOH
 
 [Socks5]
 BindAddress = 127.0.0.1:${wg_socks_port}
 EOH
-  } > "${wireproxy_conf}"
+    } > "${wireproxy_conf}"
 
-  wg_log_file="${HOME}/.suoha_wireproxy.log"
-  : > "${wg_log_file}"
+    : > "${wg_log_file}"
 
-  stop_screen wg
-  screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
+    screen -dmUS wg bash -lc "\"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
 
-  local wg_ready=0
-  for _ in $(seq 1 10); do
-    if check_port_listening "${wg_socks_port}"; then
-      wg_ready=1
+    local wg_ready=0
+    for _ in $(seq 1 10); do
+      if check_port_listening "${wg_socks_port}"; then
+        wg_ready=1
+        break
+      fi
+      # 端口冲突导致退出，立即重试
+      if [[ -s "${wg_log_file}" ]] && grep -q "address already in use" "${wg_log_file}"; then
+        say "[WARN] 端口 ${wg_socks_port} 被占用，重试第 ${wg_try} 次..."
+        kill_wireproxy
+        break
+      fi
+      sleep 1
+    done
+
+    if [[ "$wg_ready" == "1" ]]; then
+      wg_start_ok=1
       break
     fi
-    sleep 1
   done
 
-  if [[ "$wg_ready" == "1" ]]; then
+  if [[ "$wg_start_ok" == "1" ]]; then
     forward_url="socks5://127.0.0.1:${wg_socks_port}"
     say "[OK] WG落地已启动，本地Socks5: 127.0.0.1:${wg_socks_port}"
     verify_landing "3" "$forward_url"
     return 0
   fi
 
-  say "[FAIL] WG落地启动失败，请检查参数"
+  say "[FAIL] WG落地启动失败（重试3次均失败）"
   if [[ -s "${wg_log_file:-}" ]]; then
     say "[INFO] wireproxy 最近日志："
     tail -n 20 "${wg_log_file}"
