@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 CONFIG_FILE="${HOME}/.suoha_tunnel_config"
 WG_PROFILE_DIR="${HOME}/.suoha_wg_profiles"
@@ -25,32 +26,115 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/lib"
 REMOTE_LIB_BASE="https://raw.githubusercontent.com/FearW/x-tunnel/refs/heads/main/lib"
 
+# lib 校验模式：strict / permissive
+LIB_VERIFY_MODE="${LIB_VERIFY_MODE:-permissive}"
+
+LIB_FILES=(
+  "common.sh"
+  "net.sh"
+  "config.sh"
+  "wg.sh"
+  "services.sh"
+  "guard.sh"
+  "cloudflare.sh"
+)
+
 if [[ ! -d "${LIB_DIR}" ]]; then
   mkdir -p "${LIB_DIR}"
 fi
 
-# lib 文件 sha256 校验表（按需更新）
+# lib 文件 sha256 校验表（建议补全后配合 strict 模式）
 declare -A LIB_CHECKSUMS=(
-  # 如果你有校验值，填在这里，例如：
-  # ["common.sh"]="abc123..."
+  # 示例：
+  # ["common.sh"]="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  # ["net.sh"]="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  # ["config.sh"]="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  # ["wg.sh"]="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  # ["services.sh"]="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  # ["guard.sh"]="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  # ["cloudflare.sh"]="9999999999999999999999999999999999999999999999999999999999999999"
 )
 
-for lib_file in common.sh net.sh config.sh wg.sh services.sh guard.sh cloudflare.sh; do
-  if [[ ! -f "${LIB_DIR}/${lib_file}" ]]; then
-    curl -fsSL "${REMOTE_LIB_BASE}/${lib_file}" -o "${LIB_DIR}/${lib_file}" || {
-      echo "[ERROR] 缺少 ${lib_file} 且自动下载失败，请完整下载仓库后再运行。"
-      exit 1
-    }
-    # 如果有校验值则验证
-    if [[ -n "${LIB_CHECKSUMS[${lib_file}]:-}" ]]; then
-      actual_sum="$(sha256sum "${LIB_DIR}/${lib_file}" | awk '{print $1}')"
-      if [[ "$actual_sum" != "${LIB_CHECKSUMS[${lib_file}]}" ]]; then
-        echo "[ERROR] ${lib_file} 校验失败，文件可能被篡改，已删除。"
-        rm -f "${LIB_DIR}/${lib_file}"
-        exit 1
-      fi
+# 早期检查（因为下面校验函数会用到）
+if ! command -v curl >/dev/null 2>&1; then
+  echo "[ERROR] 缺少命令 curl，请先安装后重试。"
+  exit 1
+fi
+if ! command -v sha256sum >/dev/null 2>&1; then
+  echo "[ERROR] 缺少命令 sha256sum，请先安装后重试。"
+  exit 1
+fi
+
+download_lib_file() {
+  local lib_file="$1"
+  local dst="${LIB_DIR}/${lib_file}"
+  local tmp
+  tmp="$(mktemp "${LIB_DIR}/.${lib_file}.tmp.XXXXXX")"
+
+  if ! curl -fL --proto '=https' --tlsv1.2 \
+    --connect-timeout 8 --max-time 60 \
+    --retry 3 --retry-delay 1 --retry-all-errors \
+    "${REMOTE_LIB_BASE}/${lib_file}" -o "${tmp}"; then
+    rm -f "${tmp}"
+    echo "[ERROR] 下载 ${lib_file} 失败"
+    return 1
+  fi
+
+  # 有校验值则校验下载内容
+  if [[ -n "${LIB_CHECKSUMS[${lib_file}]:-}" ]]; then
+    local actual_sum
+    actual_sum="$(sha256sum "${tmp}" | awk '{print $1}')"
+    if [[ "${actual_sum}" != "${LIB_CHECKSUMS[${lib_file}]}" ]]; then
+      rm -f "${tmp}"
+      echo "[ERROR] ${lib_file} 校验失败（下载内容哈希不匹配）"
+      return 1
     fi
   fi
+
+  mv -f "${tmp}" "${dst}"
+  chmod 0644 "${dst}"
+}
+
+verify_or_repair_lib() {
+  local lib_file="$1"
+  local path="${LIB_DIR}/${lib_file}"
+  local expected="${LIB_CHECKSUMS[${lib_file}]:-}"
+
+  # 文件不存在则下载
+  if [[ ! -f "${path}" ]]; then
+    download_lib_file "${lib_file}" || return 1
+  fi
+
+  # 有校验值 -> 每次启动都校验
+  if [[ -n "${expected}" ]]; then
+    local actual
+    actual="$(sha256sum "${path}" | awk '{print $1}')"
+    if [[ "${actual}" != "${expected}" ]]; then
+      echo "[WARN] ${lib_file} 本地校验失败，尝试重新下载修复..."
+      rm -f "${path}"
+      download_lib_file "${lib_file}" || return 1
+      actual="$(sha256sum "${path}" | awk '{print $1}')"
+      if [[ "${actual}" != "${expected}" ]]; then
+        echo "[ERROR] ${lib_file} 修复后仍校验失败，已终止。"
+        rm -f "${path}"
+        return 1
+      fi
+    fi
+  else
+    # 无校验值：strict 模式报错，permissive 模式仅警告
+    if [[ "${LIB_VERIFY_MODE}" == "strict" ]]; then
+      echo "[ERROR] strict 模式要求提供 ${lib_file} 的 SHA256 校验值"
+      return 1
+    fi
+    echo "[WARN] ${lib_file} 未配置 SHA256（当前 permissive 模式）"
+  fi
+}
+
+for lib_file in "${LIB_FILES[@]}"; do
+  verify_or_repair_lib "${lib_file}" || {
+    echo "[ERROR] 依赖库校验/修复失败：${lib_file}"
+    exit 1
+  }
 done
 
 # shellcheck source=/dev/null
@@ -74,6 +158,15 @@ need_cmd curl "$idx"
 need_cmd sed "$idx"
 need_cmd grep "$idx"
 need_cmd awk "$idx"
+need_cmd sha256sum "$idx"
+
+is_valid_port() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 65535 ))
+}
+
+is_valid_interval() {
+  [[ "$1" =~ ^[0-9]+$ ]] && (( "$1" >= 1 && "$1" <= 86400 ))
+}
 
 # 可选依赖：缺失时仅警告
 for optional_cmd in ss openssl nc tar; do
@@ -82,11 +175,11 @@ for optional_cmd in ss openssl nc tar; do
   fi
 done
 
-cleanup_screens(){
+cleanup_screens() {
   screen -wipe >/dev/null 2>&1 || true
 }
 
-print_install_plan(){
+print_install_plan() {
   say "------------------------------"
   say "安装向导步骤："
   say "  1) 选择 Cloudflared 网络与传输档位"
@@ -97,7 +190,7 @@ print_install_plan(){
   say "------------------------------"
 }
 
-confirm_install_plan(){
+confirm_install_plan() {
   say "安装配置预览："
   say "  - 落地模式: $(landing_mode_text "${landing_mode:-0}")"
   if [[ -n "${forward_url:-}" ]]; then
@@ -176,6 +269,10 @@ if [[ "$mode" == "1" ]]; then
   if [[ "$fixp" == "1" ]]; then
     read -r -p "请输入固定ws端口(默认 12345):" wsport
     wsport="${wsport:-12345}"
+    if ! is_valid_port "${wsport}"; then
+      say "端口不合法，请输入 1-65535"
+      exit 1
+    fi
   else
     wsport=""
   fi
@@ -202,6 +299,10 @@ if [[ "$mode" == "1" ]]; then
           fixp=1
           read -r -p "请输入固定 ws 端口(默认 12345):" wsport
           wsport="${wsport:-12345}"
+          if ! is_valid_port "${wsport}"; then
+            say "端口不合法，请输入 1-65535"
+            exit 1
+          fi
         fi
       fi
     fi
@@ -221,6 +322,10 @@ if [[ "$mode" == "1" ]]; then
   if [[ "$guard_enabled" == "1" ]]; then
     read -r -p "请输入守护巡检间隔秒数(默认15):" guard_interval
     guard_interval="${guard_interval:-15}"
+    if ! is_valid_interval "${guard_interval}"; then
+      say "守护间隔不合法，请输入 1-86400"
+      exit 1
+    fi
   fi
 
   if ! confirm_install_plan; then
@@ -233,10 +338,27 @@ if [[ "$mode" == "1" ]]; then
   stop_screen argo
   stop_screen cfbind
   stop_screen wg
+
+  # 先备份配置，失败可回滚；避免直接 remove_config 导致历史丢失
+  config_backup=""
+  if [[ -f "${CONFIG_FILE}" ]]; then
+    config_backup="$(mktemp "${CONFIG_FILE}.bak.XXXXXX")"
+    cp -a "${CONFIG_FILE}" "${config_backup}"
+  fi
+
   remove_config
   clear
   sleep 1
-  quicktunnel
+
+  if quicktunnel; then
+    [[ -n "${config_backup}" ]] && rm -f "${config_backup}" || true
+  else
+    say "[ERROR] 启动失败，尝试回滚历史配置..."
+    if [[ -n "${config_backup}" && ! -f "${CONFIG_FILE}" ]]; then
+      mv -f "${config_backup}" "${CONFIG_FILE}" || true
+    fi
+    exit 1
+  fi
 
 elif [[ "$mode" == "2" ]]; then
   cleanup_screens
@@ -245,7 +367,6 @@ elif [[ "$mode" == "2" ]]; then
   stop_screen cfbind
   stop_screen wg
   stop_guard
-  # 停止服务时保留配置，方便下次快速启动
   clear
   say "已停止服务（配置已保留，下次启动可沿用）"
 
@@ -280,6 +401,10 @@ elif [[ "$mode" == "6" ]]; then
     else
       read -r -p "请输入守护巡检间隔秒数(默认15):" guard_interval
       guard_interval="${guard_interval:-15}"
+      if ! is_valid_interval "${guard_interval}"; then
+        say "守护间隔不合法，请输入 1-86400"
+        exit 1
+      fi
       start_guard
       save_config
     fi
