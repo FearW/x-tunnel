@@ -2,6 +2,9 @@ wg_profile_path(){
   local name="$1"
   local safe
   safe="$(echo "$name" | tr -cs 'A-Za-z0-9._-' '_')"
+  safe="${safe#_}"
+  safe="${safe%_}"
+  [[ -z "$safe" ]] && safe="default"
   echo "${WG_PROFILE_DIR}/${safe}.conf"
 }
 
@@ -24,6 +27,7 @@ EOH
 
 list_wg_profiles(){
   if [[ -d "$WG_PROFILE_DIR" ]]; then
+    local f
     for f in "${WG_PROFILE_DIR}"/*.conf; do
       [[ -f "$f" ]] || continue
       basename "$f" .conf
@@ -31,15 +35,42 @@ list_wg_profiles(){
   fi
 }
 
+# 安全读取 key="value" 格式，避免 source 执行任意代码
 load_wg_profile(){
-  local name="$1" path
+  local name="$1" path line key val
   path="$(wg_profile_path "$name")"
   if [[ ! -f "$path" ]]; then
     say "[FAIL] 未找到WG配置: $name"
     return 1
   fi
-  # shellcheck source=/dev/null
-  source "$path"
+
+  # 先清空
+  wg_private_key=""
+  wg_address=""
+  wg_dns=""
+  wg_peer_public_key=""
+  wg_preshared_key=""
+  wg_endpoint=""
+  wg_allowed_ips=""
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+    if [[ "$line" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)=\"(.*)\"$ ]]; then
+      key="${BASH_REMATCH[1]}"
+      val="${BASH_REMATCH[2]}"
+    else
+      continue
+    fi
+
+    case "$key" in
+      wg_private_key|wg_address|wg_dns|wg_peer_public_key|wg_preshared_key|wg_endpoint|wg_allowed_ips)
+        printf -v "$key" '%s' "$val"
+        ;;
+    esac
+  done < "$path"
+
   return 0
 }
 
@@ -50,7 +81,7 @@ collect_wg_inputs(){
   wg_dns="${wg_dns:-1.1.1.1}"
   read -r -p "请输入Peer公钥(PublicKey):" wg_peer_public_key
   read -r -p "请输入Peer预共享密钥(PresharedKey,可留空):" wg_preshared_key
-  read -r -p "请输入Peer端点(Endpoint, 如1.2.3.4:51820):" wg_endpoint
+  read -r -p "请输入Peer端点(Endpoint, 如1.2.3.4:51820 或 [2606:4700::1]:51820):" wg_endpoint
   read -r -p "请输入AllowedIPs(默认0.0.0.0/0):" wg_allowed_ips
   wg_allowed_ips="${wg_allowed_ips:-0.0.0.0/0}"
 
@@ -177,14 +208,17 @@ start_wg_landing(){
     say "正在下载 Wireproxy (v1.0.6)..."
     local tmp_dir
     tmp_dir="$(mktemp -d)"
-    if curl -fsSL "${download_url}" -o "${tmp_dir}/wireproxy.tar.gz"; then
+    if curl -fL --proto '=https' --tlsv1.2 \
+      --connect-timeout 8 --max-time 120 \
+      --retry 3 --retry-delay 1 --retry-all-errors \
+      "${download_url}" -o "${tmp_dir}/wireproxy.tar.gz"; then
       say "下载成功，正在解压..."
-      tar -xzf "${tmp_dir}/wireproxy.tar.gz" -C "${tmp_dir}" >/dev/null 2>&1
+      tar -xzf "${tmp_dir}/wireproxy.tar.gz" -C "${tmp_dir}" >/dev/null 2>&1 || true
       local found_bin=""
       if [[ -f "${tmp_dir}/wireproxy" ]]; then
         found_bin="${tmp_dir}/wireproxy"
       else
-        found_bin="$(find "${tmp_dir}" -type f -name 'wireproxy*' ! -name '*.tar.gz' | head -n1)"
+        found_bin="$(find "${tmp_dir}" -maxdepth 3 -type f -name 'wireproxy*' ! -name '*.tar.gz' | head -n1)"
       fi
       if [[ -n "$found_bin" && -f "$found_bin" ]]; then
         mv "$found_bin" "${wireproxy_path}"
@@ -270,11 +304,13 @@ EOH
     } > "${wireproxy_conf}"
 
     : > "${wg_log_file}"
+    chmod 600 "${wireproxy_conf}" "${wg_log_file}" || true
 
     screen -dmUS wg sh -c "exec \"${wireproxy_path}\" -c \"${wireproxy_conf}\" >> \"${wg_log_file}\" 2>&1"
 
     local wg_ready=0
-    for _ in $(seq 1 10); do
+    local i
+    for i in $(seq 1 10); do
       if check_port_listening "${wg_socks_port}"; then
         wg_ready=1
         break
@@ -323,26 +359,23 @@ valid_hostport(){
   local value="$1"
   local host port
 
-  if [[ -z "$value" || "$value" != *:* ]]; then
-    return 1
-  fi
+  [[ -z "$value" ]] && return 1
 
-  if [[ "$value" == \[*\]:* ]]; then
-    host="${value%]:*}]"
-    port="${value##*]:}"
+  if [[ "$value" =~ ^\[(.+)\]:(.+)$ ]]; then
+    # [ipv6]:port
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[2]}"
+  elif [[ "$value" =~ ^([^:]+):([0-9]+)$ ]]; then
+    # host:port (域名/IPv4)
+    host="${BASH_REMATCH[1]}"
+    port="${BASH_REMATCH[2]}"
   else
-    host="${value%:*}"
-    port="${value##*:}"
-  fi
-
-  if [[ -z "$host" || ! "$port" =~ ^[0-9]+$ ]]; then
     return 1
   fi
 
-  if (( port < 1 || port > 65535 )); then
-    return 1
-  fi
-
+  [[ -z "$host" ]] && return 1
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  (( port >= 1 && port <= 65535 )) || return 1
   return 0
 }
 
